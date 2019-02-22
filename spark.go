@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rs/cors"
 )
 
 var (
 	address = flag.String("address", "0.0.0.0", "Listening address")
 	port    = flag.String("port", "8080", "Listening port")
+	origin  = flag.String("origin", "*", "CORS Origin")
 	sslPort = flag.String("sslPort", "10433", "SSL listening port")
 	path    = flag.String("path", "/", "URL path")
 	deny    = flag.String("deny", "", "Sesitive directory or file patterns to be denied when serving directory (comma sperated)")
@@ -58,6 +61,16 @@ func (pfs protectdFileSystem) Open(path string) (http.File, error) {
 	return pfs.fs.Open(path)
 }
 
+func corsMiddleware(origin string) *cors.Cors {
+	return cors.New(cors.Options{
+		AllowedOrigins: []string{origin},
+		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT", "PATCH"},
+		AllowedHeaders: []string{"Accept", "Access-Token", "Authorization", "Content-Type",
+			"Version", "X-Api-Key", "Origin", "Recaptcha-Token"},
+		AllowCredentials: true,
+	})
+}
+
 func main() {
 	flag.Parse()
 	listen := *address + ":" + *port
@@ -73,16 +86,21 @@ func main() {
 			if *deny == "" {
 				log.Print("Warning: serving files without any filter!")
 			}
-			handler = http.StripPrefix(*path, http.FileServer(protectdFileSystem{http.Dir(body)}))
+			handler = http.StripPrefix(
+				*path,
+				corsMiddleware(*origin).Handler(
+					http.FileServer(protectdFileSystem{http.Dir(body)}),
+				),
+			)
 		case mode.IsRegular():
 			if content, err := ioutil.ReadFile(body); err != nil {
 				log.Fatal("Error reading file: ", err)
 			} else {
-				handler = bytesHandler(content)
+				handler = corsMiddleware(*origin).Handler(bytesHandler(content))
 			}
 		}
 	} else {
-		handler = bytesHandler(body)
+		handler = corsMiddleware(*origin).Handler(bytesHandler(body))
 	}
 	http.Handle(*path, handler)
 	go func() {
